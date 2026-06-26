@@ -1,0 +1,130 @@
+name: Rebuild fork
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-fork
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: CaddyBuilds/caddy-cloudflare
+  UPSTREAM_URL: https://github.com/CaddyBuilds/caddy-cloudflare.git
+  UPSTREAM_BRANCH: main
+  TARGET_BRANCH: main
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Preserve overlay
+        run: |
+          cp -a fork-overlay /tmp/fork-overlay
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream "+refs/heads/$UPSTREAM_BRANCH:refs/remotes/upstream/$UPSTREAM_BRANCH" --tags
+          git fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" || true
+
+      - name: Rebuild default branch
+        run: |
+          set -euo pipefail
+
+          git switch --force-create rebuilt-main "refs/remotes/upstream/$UPSTREAM_BRANCH"
+          /tmp/fork-overlay/apply.sh
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Rebuild from upstream $(git rev-parse --short "refs/remotes/upstream/$UPSTREAM_BRANCH")"
+          fi
+
+          if git rev-parse --verify "refs/remotes/origin/$TARGET_BRANCH" >/dev/null 2>&1 &&
+             git diff --quiet "refs/remotes/origin/$TARGET_BRANCH" HEAD; then
+            echo "Default branch tree is already up to date"
+            exit 0
+          fi
+
+          git push --force-with-lease origin HEAD:"$TARGET_BRANCH"
+
+      - name: Check latest upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq '.tag_name')"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild upstream release tag
+        if: steps.release.outputs.needed == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force upstream "refs/tags/$TAG:refs/tags/upstream/$TAG"
+
+          git switch --force-create "release-$TAG" "refs/tags/upstream/$TAG"
+          /tmp/fork-overlay/apply.sh
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Release $TAG from upstream $TAG"
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "Remote tag $TAG already exists but points to a different commit"
+              exit 1
+            fi
+          else
+            git tag "$TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+
+      - name: Create mirrored release
+        if: steps.release.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$UPSTREAM_REPO/releases/tags/$TAG" --jq '.body // ""' > /tmp/upstream-notes.md
+
+          {
+            echo "Rebuilt from upstream release $UPSTREAM_REPO@$TAG with local overlay."
+            echo
+            cat /tmp/upstream-notes.md
+          } > /tmp/release-notes.md
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file /tmp/release-notes.md \
+            --verify-tag
