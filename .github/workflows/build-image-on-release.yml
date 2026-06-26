@@ -30,9 +30,11 @@ jobs:
 
           tag="${{ github.event.release.tag_name || inputs.tag }}"
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          caddy_version="${tag#v}"
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "caddy_version=$caddy_version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         with:
@@ -53,6 +55,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            CADDY_VERSION=${{ steps.meta.outputs.caddy_version }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
           labels: |
