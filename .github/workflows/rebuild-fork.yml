@@ -56,6 +56,10 @@ jobs:
           git switch --force-create rebuilt-main "refs/remotes/upstream/$UPSTREAM_BRANCH"
           /tmp/fork-overlay/apply.sh
 
+          # Keep the automation overlay in the generated branch.
+          rm -rf fork-overlay
+          cp -a /tmp/fork-overlay fork-overlay
+
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Rebuild from upstream $(git rev-parse --short "refs/remotes/upstream/$UPSTREAM_BRANCH")"
