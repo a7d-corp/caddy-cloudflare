@@ -9,6 +9,9 @@ find .github/workflows \
     ! -name rebuild-fork.yml \
     -exec rm {} \;
 
+# remove upstream's dependabot config
+rm -f .github/dependabot.yml
+
 # add extra modules to the xcaddy build
 sed -i '/xcaddy build \\$/a\    --with github.com/greenpau/caddy-security \\' Dockerfile
 grep -q -- '--with github.com/greenpau/caddy-security' Dockerfile || {
