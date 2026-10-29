@@ -9,6 +9,7 @@ ARG TARGETOS TARGETARCH TARGETVARIANT
 # Modules built into the image. This is the only list: the daily check reads it too.
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} CGO_ENABLED=0 XCADDY_PRINT_VERSION=0 \
     xcaddy build \
+    --with github.com/greenpau/caddy-security \
     --with github.com/caddy-dns/cloudflare \
     --with github.com/WeidiDeng/caddy-cloudflare-ip \
     --with github.com/fvbommel/caddy-combine-ip-ranges \
